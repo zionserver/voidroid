@@ -1,4 +1,21 @@
 #! /bin/sh
+tint2 &
+
+xrandr -s 1360x768 &
+
+setxkbmap es &
+
+volumeicon &
+
+nm-applet &
+
+nitrogen --restore &
+
+xsetroot -cursor_name left_ptr &
+
+xrdb -load ~/.config/X11/xresources &
+
+xmodmap ~/.config/X11/xmodmap &
 
 pgrep -x sxhkd > /dev/null || sxhkd &
 
