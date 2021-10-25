@@ -10,8 +10,6 @@ volumeicon &
 
 nm-applet &
 
-nitrogen --restore &
-
 gtk-update-icon-cache sleep 0.5 &
 
 xsetroot -cursor_name left_ptr &
