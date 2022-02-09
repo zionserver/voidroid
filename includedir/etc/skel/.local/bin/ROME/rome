@@ -1,0 +1,63 @@
+#!/bin/bash
+##################################################################################
+#
+# ROME - [ROM] [E]xtractor
+#
+# Copyright (C): 2018, steadfasterX <steadfasterX [AT] gmail [DOT] com>
+#
+# Main program
+#
+##################################################################################
+
+# the vars
+VARS="${0%/*}/rome.vars"
+source $VARS
+[ $? -ne 0 ] && "ERROR: Missing requirement <$VARS>." && exit 3
+
+# the functions
+FUNCS="${0%/*}/rome.func"
+source $FUNCS
+[ $? -ne 0 ] && "ERROR: Missing requirement <$FUNCS>." && exit 3
+
+# start logging
+[ -f "$LOG" ] && echo "backing up old logfile...." && cp -f $LOG ${LOG}.old
+echo -e "$(date '+%F %T'): Starting $TNAME v${VERSION}!\n****************************************************\n" > $LOG
+
+# check freshness
+F_VCHK
+
+# check requirements:
+[ ! -x $YAD ] && F_ELOG "FATAL ERROR!! Missing requirement <yad>. Install YAD and try again!" && F_EXIT "no-YAD" 3 full
+$PYTHONBIN -c "import google.protobuf"
+if [ $? -ne 0 ];then F_MSGE 500 "FATAL ERROR!! Missing requirement\n\n  <b>Google protobuf (python3)</b>\n\nInstall this first and try again!" ; F_EXIT "no-pbuf" 3 full;fi
+
+# collect some sys info
+F_LOG "OS: $(cat /etc/*-release)"
+F_LOG "OS (lsb): $(lsb_release -a)"
+F_LOG "yad: $(yad --version)"
+F_LOG "summary:\n $(hostnamectl status |grep -v ID)\n"
+
+# check base
+if [ ! -d "$SDATPATH" ];then
+    F_ELOG "First start? Expected sdat2img here: $SDATPATH"
+    DLSDAT=$(F_MSG 400 "\n  First start?\n\n  Expected <b><u>sdat2img</u></b> here:\n  ${SDATPATH}\n\n  but it is missing..\n\n  Should I download it for you now?" "--button=Yes:0 --button=Abort:1")
+    if [ "$DLSDAT" -eq 0 ];then
+        $GIT clone --progress $SDATGIT $SDATPATH 2>&1 | $FYAD --title="$YTITLE - UPDATING" --text="\n  <b>Installing sdat2img ...</b>\n" --width=700 --height=600 --text-info --listen --tail --button=Close
+    else
+        F_LOG "sdat2imgsupdate $DLSDAT  Without this ROME will not fully work"
+    fi
+fi
+
+
+# the main func
+F_MAIN(){
+            F_LOG "$FUNCNAME: starting menu"
+            $FYAD --title="$YTITLE" --scroll --image="$SICONS/rome_205x128.png" --width=850 --height=320 --fixed --scroll --text "\n  <b>$TFULLNAME</b>\n\n  ROME is a tool for extracting ROM's which contain\n\n\t- a payload.bin\n\t- an Android sparse file (.dat)\n\t- an Android brotli sparse file (.dat.br)\n\n  and is brought to you by <b>steadfasterX</b>\n  <a href='https://code.binbash.it:8443/FWUL/android_rome'>(click here to open the code repository)</a>\n\n  Simply select the ROM zip of your choice and ROME will do the rest for you :)" \
+                --buttons-layout=spread \
+                --button="Log!$SICONS/log_16x16.png":"$MYPATH/getlog" \
+                --button="Update!$SICONS/update_48x48.png!Updating ROME":"bash -c F_UPDATE" \
+                --button="Extract!$SICONS/extract_48x48.png!Extract a ROM":"bash -c F_EXTRACTROM" \
+                --button=" Mount!$SICONS/mount_59x48.png!This will let you mount android image files (system,userdata,..)":"bash -c F_MOUNTPARTS" 
+}
+F_MAIN
+F_EXIT "main->end" 0 full
