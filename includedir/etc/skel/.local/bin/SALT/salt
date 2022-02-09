@@ -1,0 +1,291 @@
+#!/bin/bash
+##################################################################################
+#
+# SALT - [S]teadfasterX [A]ll-in-one [L]G [T]ool
+#
+# Copyright (C): 2017-2018, steadfasterX <steadfasterX [AT] gmail [DOT] com>
+#
+# Main program for SALT
+#
+##################################################################################
+
+# the vars for SALT
+VARS="${0%/*}/salt.vars"
+source $VARS
+[ $? -ne 0 ] && "ERROR: Missing requirement <$VARS>." && exit 3
+
+# the functions for the lglaf GUI
+FUNCS="${0%/*}/salt.func"
+source $FUNCS 
+[ $? -ne 0 ] && "ERROR: Missing requirement <$FUNCS>." && exit 3
+
+# perms
+chown $REALUSER $LOG 2>&1 >> /dev/null
+chown -R $REALUSER $LAFPATH $KDZTOOLS $SDATPATH 2>&1 >> /dev/null
+
+# start logging
+[ -f "$LOG" ] && echo "backing up old logfile...." && cp -f $LOG ${LOG}.old
+echo -e "$(date '+%F %T'): Starting $TNAME v${VERSION}!\n****************************************************\n" > $LOG
+
+# check requirements:
+[ ! -x $YAD ] && F_ELOG "FATAL ERROR!! Missing requirement <yad>. Install YAD and try again!" && F_EXIT "no-YAD" 3 full
+if [ ! -x $LAFTERM ];then F_MSGE 700 "Missing X terminal (usually xterm).\n  Install $LAFTERM or check salt.vars file."; F_EXIT "no-xterm" 3 full; fi 
+if [ ! -x $GIT ];then no-git 3 "\n  ERROR!\n\n  Missing GIT client.\n  Install $GIT or check salt.vars file." ; F_EXIT "no-git" 3 full; fi 
+if [ ! -x $FBBIN ];then F_MSGE 700 "Missing fastboot!\nInstall $FBBIN first (or better directly consider to use FWUL ...)!"; F_EXIT "no-fb" 3 full; fi 
+
+$PYTHONBIN -c "import zstandard"
+if [ $? -ne 0 ];then F_MSGE 500 "FATAL ERROR!! Missing requirement\n\n  <b>python-zstandard (python3)</b>\n\nRead the SALT thread for how to install and try again!" ; F_EXIT "no-zstd" 3 full;fi
+
+# set full command for restarting properly 
+export FULLCMD="$0 $@"
+
+# check root:
+ME=$(id -u)
+if [ "$ME" -ne 0 ];then
+    echo -e '\nI need more POWER! If asked now type in your sudo password to restart with root perms (wait 20s or press CTRL+C to abort)'
+    sudo $FULLCMD &
+    sleep 20s
+    F_LOG "no-root mode ending now"
+    exit 0
+fi
+
+# check if we are alone
+F_EGO
+
+# catch ctrl+c for a clean exit
+trap "F_EXIT 'ctrl+c pressed' 0 full" SIGINT
+
+# check freshness
+F_VCHK
+
+# check the base:
+if [ ! -d "$LAFPATH" ];then
+    F_ELOG "First start of SALT? Expected LG LAF NG here: $LAFPATH"
+    DLLAF=$(F_MSG 400 "\n  First start of SALT?\n\n  Expected <b><u>lglaf</u></b> here:\n  ${LAFPATH}\n\n  but it is missing..\n\n  Should I download it for you now?" "--button=Yes:0 --button=Abort:1")
+    #DLLAF=$MERR
+    if [ "$DLLAF" -eq 0 ];then
+        $GIT clone --progress $LAFGIT $LAFPATH 2>&1 | $FYAD --title="$YTITLE - UPDATING" --text="\n  <b>Installing LGLAF ...</b>\n" --height=600 --width=700 --text-info --listen --tail --button=Close
+    else
+        F_ERR lafupdate $DLLAF "\n  Without this SALT will not work!\n  ABORTED. \n"
+    fi
+fi
+if [ ! -d "$KDZTOOLS" ];then
+    F_ELOG "First start of SALT? Expected kdztools here: $KDZTOOLS"
+    DLKDZ=$(F_MSG 400 "\n  First start of SALT?\n\n  Expected <b><u>kdztools</u></b> here:\n  ${KDZTOOLS}\n\n  but it is missing..\n\n  Should I download it for you now?" "--button=Yes:0 --button=Abort:1")
+    if [ "$DLKDZ" -eq 0 ];then
+        $GIT clone --progress $KDZGIT $KDZTOOLS 2>&1 | $FYAD --title="$YTITLE - UPDATING" --text="\n  <b>Installing kdztools ...</b>\n" --width=700 --height=600 --text-info --listen --tail --button=Close
+    else
+        F_ERR ktoolsupdate $DLKDZ "\n  Without this SALT will not work!\n  ABORTED. \n"
+    fi
+fi
+if [ ! -d "$SDATPATH" ];then
+    F_ELOG "First start of SALT? Expected sdat2img here: $SDATPATH"
+    DLSDAT=$(F_MSG 400 "\n  First start of SALT?\n\n  Expected <b><u>sdat2img</u></b> here:\n  ${SDATPATH}\n\n  but it is missing..\n\n  Should I download it for you now?" "--button=Yes:0 --button=Abort:1")
+    if [ "$DLSDAT" -eq 0 ];then
+        $GIT clone --progress $SDATGIT $SDATPATH 2>&1 | $FYAD --title="$YTITLE - UPDATING" --text="\n  <b>Installing sdat2img ...</b>\n" --width=700 --height=600 --text-info --listen --tail --button=Close
+    else
+        F_LOG "sdat2imgsupdate $DLSDAT  Without this SALT will not fully work"
+    fi
+fi
+
+# collect some sys info
+F_LOG "OS: $(cat /etc/*-release)"
+F_LOG "OS (lsb): $(lsb_release -a)"
+F_LOG "yad: $(yad --version)"
+F_LOG "summary:\n $(hostnamectl status |grep -v ID)\n"
+
+# check if device in dl mode connected
+DEVCON=99
+while [ $DEVCON -ne 0 ];do
+    [ $DEVCON -eq 11 ] && break
+    F_LOG "DEVCON before: $DEVCON"
+    F_CHKDEVCON
+    DEVCON=$?
+    # skip=11, retry=22, connected=0
+    F_LOG "DEVCON after: $DEVCON"
+done
+
+# check how we get started
+EXPERIMENTAL=$(echo "$@"|grep -c experimental)
+F_LOG "EXPERIMENTAL: $EXPERIMENTAL"
+
+case $CRMODE in
+    Auto)export CRBTN="Force CR";;
+    yes)export CRBTN="Force no CR";;
+    no)export CRBTN="Set CR Auto";;
+esac
+
+# main func
+F_MAIN(){
+    if [ $DEVCON -ne 11 ];then
+        DEVINF=$(F_GETINFO)
+        for i in $DEVINF;do
+            case "${i/:*/}" in
+                imei|serial) F_LOG "parsing ${i/:*/}:xxxxxxxxxxx" ;;
+                *)           F_LOG "parsing ${i/*:/}" ;;
+            esac
+            case ${i/:*/} in
+                usu)
+                LGUSUA=$(echo "${i}"|cut -d ":" -f2)
+                USUMODEL=$(echo "${i}"|cut -d ":" -f3)
+                export LGUSU="no"
+                [ $LGUSUA == 1 ] && export LGUSU="yes"
+                ;;
+                arb)
+                DEVARBVAL=$(echo ${i}| cut -d ":" -f 2)
+                DEVARBEMPT=$(echo ${i}| cut -d ":" -f 3)
+                if [ $DEVARBEMPT -eq 0 ];then
+                    DEVARB=$DEVARBVAL
+                else
+                    DEVARB="ARB_unknown"
+                fi
+                ;;
+                lafver) export LAFVER=${i/*:/};;
+                imei) LGIMEI=${i/*:/};;
+                serial) LGSERIAL=${i/*:/};;
+                target_operator) LGOPER=${i/*:/};;
+                usu_model) USUMODEL=${i/*:/};;
+                romcomp) ROMCOMP=${i/*:/};;
+                battery_level) LGBATT=${i/*:/};;
+                model_name) LGMODEL=${i/*:/};;
+                device_sw_version) LGSWV=${i/*:/};;
+                secure_device) LGSEC=${i/*:/};;
+                device_factory_version) LGFACV="$(echo ${i/*:/} | sed 's/^-/x/g')";;
+                target_country) LGCOUNTRY=${i/*:/};;
+                *) F_ELOG "unknown parameter: $i" ;;
+            esac
+        done
+    fi
+    [ -z $LAFVER ] && export LAFVER=no_device_found
+    [ -z $LGUSUA ] && export LGUSU=no_device_found
+    [ -z $LGIMEI ] && LGIMEI=no_device_found
+    [ -z $LGSERIAL ] && LGSERIAL=no_device_found
+    [ -z $LGOPER ] && LGOPER=no_device_found
+    [ -z $LGMODEL ] && LGMODEL=no_device_found
+    [ -z $LGSWV ] && LGSWV=no_device_found 
+    [ -z $LGFACV ] && LGFACV=no_info_found
+    [ -z $LGCOUNTRY ] && LGCOUNTRY=no_device_found
+    [ -z $LGSEC ] && LGSEC=no_device_found
+    [ -z $LGBATT ] && LGBATT=no_device_found
+    [ -z $ROMCOMP ] && ROMCOMP=no_device_found
+    [ -z $DEVARB ] && DEVARB=no_ARB_info_found
+    # overwrite model definition when UsU and model info available
+    [ ! -z $USUMODEL ] && LGMODEL=$USUMODEL && LGSERIAL=${LGSERIAL/LGLS991/$LGMODEL}
+
+    F_LOG "Detected stuff:\nDEVCON=$DEVCON\nLAFVER=$LAFVER\nLGUSU=$LGUSU\nLGSERIAL=$LGSERIAL\nLGOPER=$LGOPER\nLGMODEL=$LGMODEL\nLGSWV=$LGSWV\nLGFACV=$LGFACV\nLGCOUNTRY=$LGCOUNTRY\nLGSEC=$LGSEC\nLGBATT=$LGBATT\nROMCOMP=$ROMCOMP\nDEVARB=$DEVARB"
+
+    # make the decision whcih features should be enabled in the main GUI    
+    #TODO: test all flash parts again then we can enable that one: if [ "$LAFVER" == "1000001" ]||[ $EXPERIMENTAL -eq 1 ];then FLASHMENU=1; else FLASHMENU=0;fi
+    #if [ "$LAFVER" == "1000001" ]||[ $EXPERIMENTAL -eq 1 ];then FLASHMENU=0; else FLASHMENU=0;fi
+    if [ $DEVCON -eq 0 ];then
+        if [ "$LAFVER" != "1000001" ] && [ $EXPERIMENTAL -ne 1 ];then
+
+            shopt -s extglob
+            case $LGMODEL in
+                ${LGG4})
+                    F_MSGW 700 "Your LAF firmware ($LAFVER / $LGMODEL) does <b>not</b> support direct flashing!\n\nFlashing functionality <b>disabled</b>!\n\nActivate flashing functionality by flashing a SALT compatible LAF partition.\nDownload it right here for <b>any</b> G4 model (requires an unlocked device + TWRP):\n\n<a href='https://www.androidfilehost.com/?fid=818070582850495147'>SALT-compatible-LAF_flash-in-twrp.zip (click here)</a>\n\nYou can still use many of the features SALT offering - just not the flashing part.\n\nThis does <b>NOT</b> affect unlocking the G4!\n<b>Just go on</b> if you want to UsU.." "--fixed --height=300"
+                ;;
+            esac
+            F_LOG "Flashing functionality disabled bc: LAFVER = $LAFVER and/or EXPERIMENTAL = $EXPERIMENTAL"
+            FLASHMENU=0
+        else
+            #ATM: DISABLED! WITHOUT EXPERIMENTAL FLAG NO WAY TO OPEN IT
+            # FLASHMENU=1
+            FLASHMENU=0
+            F_LOG "Flashing functionality enabled bc: LAFVER = $LAFVER and/or EXPERIMENTAL = $EXPERIMENTAL"
+            F_LOG "HINT: Flashing temporarly NOT auto enabled (until all tests finished)!"
+        fi
+    else
+            F_LOG "Flashing functionality disabled bc: DEVCON = $DEVCON (no device found and skipped pressed)"
+            FLASHMENU=0
+    fi
+        
+    # main SALT screen depends on experimental flag .. and LAF version .. and model
+    if [ $FLASHMENU -eq 0 ]&&[ $EXPERIMENTAL -ne 1 ];then
+        shopt -s extglob
+        case $LGMODEL in
+            ${LGG4})
+                F_LOG "$FUNCNAME: starting G4 menu"
+                $FYAD --title="$YTITLE" --width=1100 --height=620 --scroll --image="$SICONS/salt_logo_128x128.png" --text "\n  <b>$TFULLNAME</b>\n  SALT is a replacement for the windows software LGUP (plus MANY more features!) and brought to you by <b>steadfasterX</b>\n  <a href='https://bit.do/SALTatXDA'>(click here to open the official SALT thread)</a>\n\n  <b>The following comes directly from your device:</b>\n  (<i>\"no_device_found\"</i> if no device connected)\n" \
+                --form --columns=2 \
+                --field="  Device model":RO $LGMODEL \
+                --field="  Firmware (laf)":RO $LGSWV \
+                --field="  Firmware (system)":RO "$LGFACV" \
+                --field="  Carrier":RO "$LGOPER" \
+                --field="  Country":RO "$LGCOUNTRY"\
+                --field="  UsU":RO $LGUSU \
+                --field="  <span color='#ff0000'>REBOOT your device</span>":FBTN "$SALTPATH/reboot" \
+                --field="  Current CR mode":RO $CRMODE \
+                --field="  GPT compatibility":RO $ROMCOMP \
+                --field="  LAF protocol":RO $LAFVER \
+                --field="  Battery level":RO $LGBATT \
+                --field="  <span color=\'#ff0000\'>AntiRollBack</span>":RO $DEVARB \
+                --field="  IMEI" $LGIMEI \
+                --field="  Serial":RO $LGSERIAL \
+                --field="  ADVANCED Menu!$SICONS/advanced_16x16.png!This contains tools not for the average user!":FBTN "bash -c 'F_ADVMENU $LGMODEL'" \
+                true \
+                --buttons-layout=spread \
+                --button="!$SICONS/update_48x48.png!Updating SALT (kdztools, lglaf, SALT)":"bash -c F_UPDATE" \
+                --button="  Backup!$SICONS/backup.png!Make a full or basic backup while in download mode":"bash -c F_BACKUP" \
+                --button="Extract!$SICONS/extract_48x48.png!Extract a KDZ file. If you want to flash choose Extract+Flash instead":"bash -c F_STARTKDZ"
+            ;;
+            *)
+            F_LOG "$FUNCNAME: starting non-G4 menu"
+            $FYAD --title="$YTITLE" --width=1100 --height=620 --scroll --image="$SICONS/salt_logo_128x128.png" --text "\n  <b>$TFULLNAME</b>\n  SALT is a replacement for the windows software LGUP (plus MANY more features!) and brought to you by <b>steadfasterX</b>\n  <a href='https://bit.do/SALTatXDA'>(click here to open the official SALT thread)</a>\n\n  <b>The following comes directly from your device:</b>\n  (<i>\"no_device_found\"</i> if no device connected)\n" \
+                --form --columns=2 \
+                --field="  Device model":RO $LGMODEL \
+                --field="  Firmware (laf)":RO $LGSWV \
+                --field="  Firmware (system)":RO "$LGFACV" \
+                --field="  Carrier":RO "$LGOPER" \
+                --field="  Country":RO "$LGCOUNTRY"\
+                --field="  <span color='#ff0000'>REBOOT your device</span>":FBTN "$SALTPATH/reboot" \
+                --field="  Current CR mode":RO $CRMODE \
+                --field="  LAF protocol":RO $LAFVER \
+                --field="  Battery level":RO $LGBATT \
+                --field="  <span color=\'#ff0000\'>AntiRollBack</span>":RO $DEVARB \
+                --field="  IMEI" $LGIMEI \
+                --field="  Serial":RO $LGSERIAL \
+                --field="  ADVANCED Menu!$SICONS/advanced_16x16.png!This contains tools not for the average user!":FBTN "bash -c 'F_ADVMENU $LGMODEL'" \
+                true \
+                --buttons-layout=spread \
+                --button="!$SICONS/update_48x48.png!Updating SALT (kdztools, lglaf, SALT)":"bash -c F_UPDATE" \
+                --button="  Backup!$SICONS/backup.png!Make a full or basic backup while in download mode":"bash -c F_BACKUP" \
+                --button="Extract!$SICONS/extract_48x48.png!Extract a KDZ file. If you want to flash choose Extract+Flash instead":"bash -c F_STARTKDZ"
+            ;;
+        esac
+    else
+        # when started with --experimental (will be removed one day)
+        if [ $EXPERIMENTAL -eq 1 ]||[ $FLASHMENU -eq 1 ];then
+            F_LOG "$FUNCNAME: starting experimental menu"
+            $FYAD --title="$YTITLE" --width=1100 --height=620 --scroll --image="$SICONS/salt_logo_128x128.png" --text "\n  <b>$TFULLNAME</b>\n  SALT is a replacement for the windows software LGUP (plus MANY more features!) and brought to you by <b>steadfasterX</b>\n  <a href='https://bit.do/SALTatXDA'>(click here to open the official SALT thread)</a>\n\n  <b>The following comes directly from your device:</b>\n  (<i>\"no_device_found\"</i> if no device connected)\n" \
+              --form --columns=2 \
+              --field="  Device model":RO $LGMODEL \
+              --field="  Firmware (laf)":RO $LGSWV \
+              --field="  Firmware (system)":RO "$LGFACV" \
+              --field="  Carrier":RO "$LGOPER" \
+              --field="  Country":RO "$LGCOUNTRY" \
+              --field="  UsU":RO $LGUSU \
+              --field="  <span color='#ff0000'>REBOOT your device</span>":FBTN "$SALTPATH/reboot" \
+              --field="  Current CR mode":RO $CRMODE \
+              --field="  GPT compatibility":RO $ROMCOMP \
+              --field="  LAF protocol":RO $LAFVER \
+              --field="  Battery level":RO $LGBATT \
+              --field="  <span color='#ff0000'>AntiRollBack</span>":RO $DEVARB \
+              --field="  IMEI" $LGIMEI \
+              --field="  Serial":RO $LGSERIAL \
+              --field="  ADVANCED Menu!$SICONS/advanced_16x16.png!This contains tools not for the average user!":FBTN "bash -c 'F_ADVMENU $LGMODEL'" \
+              true \
+              --buttons-layout=spread \
+              --button="!$SICONS/update_48x48.png!Updating SALT (kdztools, lglaf, SALT)":"bash -c F_UPDATE" \
+              --button="  Backup!$SICONS/backup.png!Make a full or basic backup while in download mode":"bash -c F_BACKUP" \
+              --button="Extract!$SICONS/extract_48x48.png!Extract a KDZ file. If you want to flash choose Extract+Flash instead":"bash -c F_STARTKDZ" \
+              --button="Flash (folder)!$SICONS/flash_48x48.png!This will flash one or multiple partitions from any folder (e.g. from a previous backup)":"bash -c F_FLASHPART"\
+              --button=" Flash (kdz)!$SICONS/flashkdz_70x48.png!Extract and Flash like LGUP would do":"bash -c F_STARTKDZFL" 
+        else
+            F_LOG "ERROR dont know which GUI should be used... :("
+        fi
+    fi
+}
+F_MAIN
+
+F_EXIT "main->end" 0 full
